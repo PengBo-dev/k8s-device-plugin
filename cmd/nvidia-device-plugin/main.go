@@ -34,6 +34,7 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 
 	spec "github.com/NVIDIA/k8s-device-plugin/api/config/v1"
+	"github.com/NVIDIA/k8s-device-plugin/internal/annotator"
 	"github.com/NVIDIA/k8s-device-plugin/internal/info"
 	"github.com/NVIDIA/k8s-device-plugin/internal/plugin"
 	"github.com/NVIDIA/k8s-device-plugin/internal/rm"
@@ -292,7 +293,7 @@ restart:
 	}
 
 	klog.Info("Starting Plugins.")
-	plugins, restartPlugins, err := startPlugins(c, o)
+	plugins, _, restartPlugins, err := startPlugins(c, o)
 	if err != nil {
 		return fmt.Errorf("error starting plugins: %v", err)
 	}
@@ -346,12 +347,12 @@ exit:
 	return nil
 }
 
-func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, bool, error) {
+func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, nvml.Interface, bool, error) {
 	// Load the configuration file
 	klog.Info("Loading configuration.")
 	config, err := loadConfig(c, o.flags)
 	if err != nil {
-		return nil, false, fmt.Errorf("unable to load config: %v", err)
+		return nil, nil, false, fmt.Errorf("unable to load config: %v", err)
 	}
 	spec.DisableResourceNamingInConfig(config)
 
@@ -370,20 +371,20 @@ func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, bool, error) 
 
 	err = validateFlags(infolib, config)
 	if err != nil {
-		return nil, false, fmt.Errorf("unable to validate flags: %v", err)
+		return nil, nil, false, fmt.Errorf("unable to validate flags: %v", err)
 	}
 
 	// Update the configuration file with default resources.
 	klog.Info("Updating config with default resource matching patterns.")
 	err = rm.AddDefaultResourcesToConfig(infolib, nvmllib, devicelib, config)
 	if err != nil {
-		return nil, false, fmt.Errorf("unable to add default resources to config: %v", err)
+		return nil, nil, false, fmt.Errorf("unable to add default resources to config: %v", err)
 	}
 
 	// Print the config to the output.
 	configJSON, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to marshal config to JSON: %v", err)
+		return nil, nil, false, fmt.Errorf("failed to marshal config to JSON: %v", err)
 	}
 	klog.Infof("\nRunning with config:\n%v", string(configJSON))
 
@@ -391,7 +392,7 @@ func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, bool, error) 
 	klog.Info("Retrieving plugins.")
 	plugins, err := GetPlugins(c.Context, infolib, nvmllib, devicelib, config, o)
 	if err != nil {
-		return nil, false, fmt.Errorf("error getting plugins: %v", err)
+		return nil, nil, false, fmt.Errorf("error getting plugins: %v", err)
 	}
 
 	// Loop through all plugins, starting them if they have any devices
@@ -407,7 +408,7 @@ func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, bool, error) 
 		// Start the gRPC server for plugin p and connect it with the kubelet.
 		if err := p.Start(o.kubeletSocket); err != nil {
 			klog.Errorf("Failed to start plugin: %v", err)
-			return plugins, true, nil
+			return plugins, nvmllib, true, nil
 		}
 		started++
 	}
@@ -416,7 +417,18 @@ func startPlugins(c *cli.Context, o *options) ([]plugin.Interface, bool, error) 
 		klog.Info("No devices found. Waiting indefinitely.")
 	}
 
-	return plugins, false, nil
+	// ===== 新增：启动 GPU 健康 annotation 协程 =====
+	ann, err := annotator.New(nvmllib, 30*time.Second, 95)
+	if err != nil {
+		klog.Warningf("GPU health annotator disabled: %v", err)
+	} else {
+		annotatorStop := make(chan struct{})
+		go ann.Run(annotatorStop)
+		klog.Info("GPU health annotator started (interval=30s, threshold=95%)")
+	}
+	// ===== 新增结束 =====
+
+	return plugins, nvmllib, false, nil
 }
 
 func stopPlugins(plugins []plugin.Interface) error {
