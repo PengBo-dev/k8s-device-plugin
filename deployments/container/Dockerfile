@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.26.6 AS base
+FROM m.daocloud.io/docker.io/library/golang:1.26.6 AS base
+ENV GOPROXY=https://goproxy.cn,direct
 
 # The devel image is used for local development.
 FROM base AS devel
@@ -43,7 +44,7 @@ RUN make PREFIX=/artifacts cmds
 # Build a static busybox layout: one binary plus applet symlinks (sh, rm,
 # ln, sleep, cat, ...) so PATH-resolved commands in init-container wrappers
 # and lifecycle hooks keep working on the non-*-dev* distroless base.
-FROM debian:trixie-slim AS shell
+FROM m.daocloud.io/docker.io/library/debian:trixie-slim AS shell
 RUN apt-get update \
  && apt-get install -y --no-install-recommends busybox-static \
  && rm -rf /var/lib/apt/lists/* \
