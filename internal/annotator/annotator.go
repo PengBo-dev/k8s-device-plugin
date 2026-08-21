@@ -77,8 +77,8 @@ func (a *Annotator) updateAnnotations() error {
 	patch := map[string]interface{}{
 		"metadata": map[string]interface{}{
 			"annotations": map[string]string{
-				"nvidia.com/gpu-health-summary": summary,
-				"nvidia.com/gpu-health-detail":  string(detailJSON),
+				"nvidia/gpu-health-summary": summary,
+				"nvidia/gpu-health-detail":  string(detailJSON),
 			},
 		},
 	}
